@@ -839,20 +839,22 @@ def wizard():
     return True
 
 
-DC_MAX = 1900            # حد دیسکورد ۲۰۰۰ کاراکتر است
+DC_MAX = 3900            # حد توضیح Embed دیسکورد ۴۰۹۶ کاراکتر است
 
 
-def html_to_discord(t):
+def html_to_discord(t, embed=False):
     """HTML تلگرام (b/i/a) را به مارک‌داون دیسکورد تبدیل می‌کند."""
     t = re.sub(r"</?b>", "**", t)
     t = re.sub(r"</?i>", "*", t)
     t = re.sub(r"<(?!/?a[ >])[^>]+>", "", t)          # هر تگ دیگری حذف شود (a می‌ماند)
-    t = re.sub(r'<a href="([^"]+)">(.*?)</a>', lambda m: f"[{m.group(2)}](<{html.unescape(m.group(1))}>)", t, flags=re.S)
+    t = re.sub(r'<a href="([^"]+)">(.*?)</a>', lambda m: (f"[{m.group(2)}]({html.unescape(m.group(1))})" if embed
+                                                              else f"[{m.group(2)}](<{html.unescape(m.group(1))}>)"), t, flags=re.S)
     return html.unescape(t)
 
 
 def send_discord(webhook, text):
-    text = html_to_discord(text)
+    text = html_to_discord(text, embed=True)
+    color = 0xE74C3C if "🔴" in text[:60] else (0x9B59B6 if "📅" in text[:20] else 0x3498DB)
     parts, cur = [], ""
     for ln in text.split("\n"):
         while len(ln) > DC_MAX:
@@ -869,7 +871,8 @@ def send_discord(webhook, text):
     if cur.strip():
         parts.append(cur)
     for part in parts:
-        body = json.dumps({"content": part, "allowed_mentions": {"parse": []}}).encode()
+        body = json.dumps({"embeds": [{"description": part, "color": color}],
+                           "allowed_mentions": {"parse": []}}).encode()
         for _ in range(3):
             req = urllib.request.Request(webhook, data=body, headers={
                 "Content-Type": "application/json", "User-Agent": "DiscordBot (news-agent, 1.0)"})
