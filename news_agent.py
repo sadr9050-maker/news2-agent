@@ -77,6 +77,8 @@ DEFAULTS = {
     "fetch_article": True,       # اگر فید چکیده نداشت، ابتدای متن خبر را از صفحهٔ خبر می‌خواند (رایگان)
     "anthropic_key": "",         # اختیاری: با کلید API از Anthropic، چکیدهٔ فارسی هوشمند و کوتاه (۱ تا ۲ جمله) ساخته می‌شود
     "ai_model": "claude-haiku-4-5",
+    "discord_big_title": True,   # تیتر خبر در دیسکورد درشت باشد
+    "discord_frame": True,       # قاب (خط بالا و پایین) دور پیام‌های دیسکورد
     "only_high": False,          # True = فقط خبرهای «مهم» (فد، تورم، شوک‌های بازار...) منتشر شود
     "summary_restricted_sources": False,  # True = برای Reuters/FT/Bloomberg هم چکیده منتشر شود (پیش‌فرض: فقط تیتر+لینک)
     "backfill_max_age_minutes": 360,      # پنجرهٔ سن خبر فقط برای --backfill
@@ -852,8 +854,13 @@ def html_to_discord(t, embed=False):
     return html.unescape(t)
 
 
-def send_discord(webhook, text):
+DC_FRAME_LINE = "━" * 22      # خط بالا و پایین قاب (کنار Embed هم خودش نوار رنگی دارد → قاب دورتادور)
+
+
+def send_discord(webhook, text, frame=True, big_title=True):
     text = html_to_discord(text, embed=True)
+    if big_title:      # تیتر درشت‌تر (دیسکورد فقط با هدینگ مارک‌داون اندازهٔ فونت را بزرگ می‌کند)
+        text = re.sub(r"^(\u200f?)(\*\*[^*\n]+\*\*)$", r"## \1\2", text, flags=re.M)
     color = 0xE74C3C if "🔴" in text[:60] else (0x9B59B6 if "📅" in text[:20] else 0x3498DB)
     parts, cur = [], ""
     for ln in text.split("\n"):
@@ -871,6 +878,8 @@ def send_discord(webhook, text):
     if cur.strip():
         parts.append(cur)
     for part in parts:
+        if frame:
+            part = f"{DC_FRAME_LINE}\n{part}\n{DC_FRAME_LINE}"
         body = json.dumps({"embeds": [{"description": part, "color": color}],
                            "allowed_mentions": {"parse": []}}).encode()
         for _ in range(3):
@@ -900,7 +909,8 @@ def send_discord(webhook, text):
 
 def make_post(cfg):
     if cfg.get("discord_webhook"):
-        return lambda m: send_discord(cfg["discord_webhook"], m)
+        return lambda m: send_discord(cfg["discord_webhook"], m, frame=cfg.get("discord_frame", True),
+                                                 big_title=cfg.get("discord_big_title", True))
     return lambda m: send_telegram(cfg["token"], cfg["channel"], m)
 
 
