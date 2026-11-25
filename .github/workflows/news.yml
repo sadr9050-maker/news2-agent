@@ -2,11 +2,11 @@ name: Market News Agent
 
 on:
   schedule:
-    - cron: "*/30 * * * *"     # هر ۳۰ دقیقه یک اجرا در صف می‌ماند؛ اجرای قبلی که تمام شود بعدی بلافاصله شروع می‌شود
+    - cron: "*/5 * * * *"     # کمترین فاصلهٔ مجاز گیت‌هاب ۵ دقیقه است
   workflow_dispatch:           # اجرای دستی از تب Actions
 
 concurrency:
-  group: news-agent            # فقط یک نمونه هم‌زمان؛ بقیه در صف می‌مانند (پست تکراری نمی‌رود)
+  group: news-agent            # جلوگیری از اجرای هم‌زمان دو نمونه (پست تکراری)
   cancel-in-progress: false
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      # بازگردانی استیت دور قبل (خبرهای دیده‌شده + تیترهای اخیر)
+      # بازگردانی استیت دور قبل (خبرهای دیده‌شده + تیترهای اخیر + تحلیل‌های ارسال‌شده)
       - name: Restore state
         uses: actions/cache/restore@v4
         with:
@@ -31,20 +31,20 @@ jobs:
           key: news-state-${{ github.run_id }}
           restore-keys: news-state-
 
+      # ایجنت اگر news_config.json نباشد جادوگر تعاملی را اجرا می‌کند؛ در CI فایل خالی کافی است
+      # (توکن و کانال از سکرت‌ها خوانده می‌شوند)
       - name: Prepare config
         run: '[ -f news_config.json ] || echo "{}" > news_config.json'
 
-      # برنامه حدود ۵۵ دقیقه در حلقه می‌ماند و هر ۶۰ ثانیه فیدها را چک می‌کند؛
-      # بعد timeout سیگنال می‌فرستد، برنامه استیت را ذخیره می‌کند و تمام می‌شود (کد 124 عادی است)
-      - name: Run agent (loop ~55 min)
+      - name: Run agent (one cycle)
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          timeout 3300 python news_agent.py || [ $? -eq 124 ]
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # اختیاری؛ اگر نداری می‌تواند خالی بماند
+        run: python news_agent.py --once
 
+      # حتی اگر اجرا خطا داد، استیت ذخیره شود
       - name: Save state
         if: always()
         uses: actions/cache/save@v4
