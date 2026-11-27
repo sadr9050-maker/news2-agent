@@ -64,6 +64,9 @@ DEFAULTS = {
     "token": "",                 # توکن ربات تلگرام
     "channel": "",               # مثل @mychannel یا -100123456789
     "discord_webhook": "",       # اگر پر باشد، پیام‌ها به دیسکورد می‌روند (به‌جای تلگرام)
+    "matrix_homeserver": "",     # مثل https://matrix.org ؛ اگر matrix_* پر باشد، ارسال به Element/Matrix (اولویت بالاتر از دیسکورد)
+    "matrix_room": "",           # شناسهٔ داخلی اتاق، مثل !abc123:matrix.org
+    "matrix_token": "",          # توکن دسترسی حساب ربات
     "poll_seconds": 60,          # هر چند ثانیه فیدها چک شود
     "max_per_cycle": 8,          # حداکثر پیام در هر دور (برای جلوگیری از اسپم)
     "max_age_minutes": 20,       # فقط خبرهای همین چند دقیقهٔ اخیر منتشر می‌شوند (خبر بدون تاریخ منتشر نمی‌شود)
@@ -77,10 +80,8 @@ DEFAULTS = {
     "fetch_article": True,       # اگر فید چکیده نداشت، ابتدای متن خبر را از صفحهٔ خبر می‌خواند (رایگان)
     "anthropic_key": "",         # اختیاری: با کلید API از Anthropic، چکیدهٔ فارسی هوشمند و کوتاه (۱ تا ۲ جمله) ساخته می‌شود
     "ai_model": "claude-haiku-4-5",
-    "discord_big_title": True,   # تیتر خبر در دیسکورد درشت باشد
-    "discord_frame": True,       # قاب (خط بالا و پایین) دور پیام‌های دیسکورد
     "only_high": False,          # True = فقط خبرهای «مهم» (فد، تورم، شوک‌های بازار...) منتشر شود
-    "summary_restricted_sources": False,  # True = برای Reuters/FT/Bloomberg هم چکیده منتشر شود (پیش‌فرض: فقط تیتر+لینک)
+    "summary_restricted_sources": True,   # True = برای Reuters/FT/Bloomberg هم چکیده منتشر شود (پیش‌فرض: فقط تیتر+لینک)
     "backfill_max_age_minutes": 360,      # پنجرهٔ سن خبر فقط برای --backfill
     "fetch_workers": 8,          # تعداد فیدهای هم‌زمان
     "article_workers": 6,        # تعداد صفحه‌های خبری که هم‌زمان خوانده می‌شوند
@@ -290,6 +291,9 @@ def load_cfg():
     cfg["token"] = os.environ.get("TG_BOT_TOKEN", cfg["token"]).strip()
     cfg["channel"] = os.environ.get("TG_CHANNEL", cfg["channel"]).strip()
     cfg["discord_webhook"] = os.environ.get("DISCORD_WEBHOOK_URL", cfg.get("discord_webhook", "")).strip()
+    cfg["matrix_homeserver"] = os.environ.get("MATRIX_HOMESERVER", cfg.get("matrix_homeserver", "")).strip().rstrip("/")
+    cfg["matrix_room"] = os.environ.get("MATRIX_ROOM_ID", cfg.get("matrix_room", "")).strip()
+    cfg["matrix_token"] = os.environ.get("MATRIX_ACCESS_TOKEN", cfg.get("matrix_token", "")).strip()
     cfg["anthropic_key"] = os.environ.get("ANTHROPIC_API_KEY", cfg.get("anthropic_key", "")).strip()
     if os.environ.get("NEWS_AI_SUMMARY", "").strip().lower() in ("0", "false", "no"):
         cfg["ai_news_summary"] = False
@@ -841,7 +845,8 @@ def wizard():
     return True
 
 
-DC_MAX = 3900            # حد توضیح Embed دیسکورد ۴۰۹۶ کاراکتر است
+DC_RULE = "━" * 24
+DC_MAX = 3800            # حد توضیح Embed دیسکورد ۴۰۹۶ کاراکتر است
 
 
 def html_to_discord(t, embed=False):
@@ -854,13 +859,8 @@ def html_to_discord(t, embed=False):
     return html.unescape(t)
 
 
-DC_FRAME_LINE = "━" * 22      # خط بالا و پایین قاب (کنار Embed هم خودش نوار رنگی دارد → قاب دورتادور)
-
-
-def send_discord(webhook, text, frame=True, big_title=True):
+def send_discord(webhook, text):
     text = html_to_discord(text, embed=True)
-    if big_title:      # تیتر درشت‌تر (دیسکورد فقط با هدینگ مارک‌داون اندازهٔ فونت را بزرگ می‌کند)
-        text = re.sub(r"^(\u200f?)(\*\*[^*\n]+\*\*)$", r"## \1\2", text, flags=re.M)
     color = 0xE74C3C if "🔴" in text[:60] else (0x9B59B6 if "📅" in text[:20] else 0x3498DB)
     parts, cur = [], ""
     for ln in text.split("\n"):
@@ -878,9 +878,8 @@ def send_discord(webhook, text, frame=True, big_title=True):
     if cur.strip():
         parts.append(cur)
     for part in parts:
-        if frame:
-            part = f"{DC_FRAME_LINE}\n{part}\n{DC_FRAME_LINE}"
-        body = json.dumps({"embeds": [{"description": part, "color": color}],
+        framed = f"{DC_RULE}\n{part}\n{DC_RULE}"        # خط بالا و پایین + نوار رنگی کنار = قاب
+        body = json.dumps({"embeds": [{"description": framed, "color": color}],
                            "allowed_mentions": {"parse": []}}).encode()
         for _ in range(3):
             req = urllib.request.Request(webhook, data=body, headers={
@@ -907,10 +906,66 @@ def send_discord(webhook, text, frame=True, big_title=True):
     return True
 
 
+def has_matrix(cfg):
+    return bool(cfg.get("matrix_homeserver") and cfg.get("matrix_room") and cfg.get("matrix_token"))
+
+
+def has_alt_dest(cfg):
+    """مقصد غیر تلگرام (Matrix یا Discord) تنظیم شده است؟"""
+    return has_matrix(cfg) or bool(cfg.get("discord_webhook"))
+
+
+def _matrix_html(text):
+    t = re.sub(r"\n", "<br>", text)
+    return f"<blockquote>{t}</blockquote>"
+
+
+def send_matrix(hs, token, room, text):
+    """ارسال به اتاق Matrix/Element با API استاندارد (متن HTML: پررنگ، کج، لینک)."""
+    plain = html_to_discord(text, embed=True)
+    plain = re.sub(r"\*+", "", plain)
+    body = json.dumps({"msgtype": "m.text", "body": re.sub(r"<[^>]+>", "", html.unescape(plain)),
+                       "format": "org.matrix.custom.html", "formatted_body": _matrix_html(text)}).encode()
+    joined = False
+    for attempt in range(4):
+        txn = f"{int(time.time() * 1000)}{os.urandom(3).hex()}"
+        url = f"{hs}/_matrix/client/v3/rooms/{urllib.parse.quote(room, safe='')}/send/m.room.message/{txn}"
+        req = urllib.request.Request(url, data=body, method="PUT", headers={
+            "Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "news-agent/1.0"})
+        try:
+            urllib.request.urlopen(req, timeout=20).read()
+            return True
+        except urllib.error.HTTPError as e:
+            try:
+                j = json.loads(e.read().decode())
+            except Exception:
+                j = {}
+            if e.code == 429:
+                time.sleep(j.get("retry_after_ms", 2000) / 1000 + 0.5)
+                continue
+            if e.code == 403 and not joined:       # ربات هنوز دعوت را نپذیرفته؛ خودکار join می‌کنیم
+                joined = True
+                jreq = urllib.request.Request(f"{hs}/_matrix/client/v3/join/{urllib.parse.quote(room, safe='')}",
+                                              data=b"{}", method="POST",
+                                              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+                try:
+                    urllib.request.urlopen(jreq, timeout=20).read()
+                    continue
+                except Exception:
+                    pass
+            raise RuntimeError(f"Matrix خطا داد ({e.code}): {j.get('errcode', '')} {j.get('error', e.reason)}")
+        except (urllib.error.URLError, OSError) as e:
+            if attempt == 3:
+                raise RuntimeError(f"اتصال به Matrix ممکن نشد: {e}")
+            time.sleep(2)
+    raise RuntimeError("Matrix: تلاش‌ها ناموفق بود")
+
+
 def make_post(cfg):
+    if has_matrix(cfg):
+        return lambda m: send_matrix(cfg["matrix_homeserver"], cfg["matrix_token"], cfg["matrix_room"], m)
     if cfg.get("discord_webhook"):
-        return lambda m: send_discord(cfg["discord_webhook"], m, frame=cfg.get("discord_frame", True),
-                                                 big_title=cfg.get("discord_big_title", True))
+        return lambda m: send_discord(cfg["discord_webhook"], m)
     return lambda m: send_telegram(cfg["token"], cfg["channel"], m)
 
 
@@ -1411,7 +1466,7 @@ def main():
             sys.exit("تحلیل به کلید Anthropic نیاز دارد. ANTHROPIC_API_KEY را ست کن یا در news_config.json بگذار.")
         if a.dry_run:
             post_a = lambda m: print("-" * 50 + "\n" + re.sub(r"<[^>]+>", "", html.unescape(m)))  # noqa
-        elif not cfg["discord_webhook"] and (not cfg["token"] or not cfg["channel"]):
+        elif not has_alt_dest(cfg) and (not cfg["token"] or not cfg["channel"]):
             sys.exit("token یا channel خالی است (برای فقط چاپ، --dry-run هم بگذار).")
         else:
             post_a = make_post(cfg)
@@ -1429,9 +1484,9 @@ def main():
         n = run_cycle(cfg, seen, post, first=first, backfill=bf, recent=recent)
         log(f"پایان پیش‌نمایش: {n} خبر.")
         return
-    if not cfg["discord_webhook"] and (not cfg["token"] or not cfg["channel"]):
+    if not has_alt_dest(cfg) and (not cfg["token"] or not cfg["channel"]):
         sys.exit(f"token یا channel خالی است. فایل را ویرایش کن:\n  {CFG_FILE}")
-    if not cfg["discord_webhook"] and looks_like_bot(cfg["channel"]):
+    if not has_alt_dest(cfg) and looks_like_bot(cfg["channel"]):
         sys.exit("مقدار channel یوزرنیم یک ربات است (آخرش bot دارد). یوزرنیم کانال را بگذار، یا  python news_agent.py --setup  را اجرا کن.")
     if a.test:
         try:
