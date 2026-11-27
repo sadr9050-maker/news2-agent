@@ -916,8 +916,8 @@ def has_alt_dest(cfg):
 
 
 def _matrix_html(text):
-    t = re.sub(r"\n", "<br>", text)
-    return f"<blockquote>{t}</blockquote>"
+    # بدون قاب/نقل‌قول: فقط متن ساده با پررنگ، کج و لینک
+    return re.sub(r"\n", "<br>", text)
 
 
 def send_matrix(hs, token, room, text):
