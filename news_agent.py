@@ -920,12 +920,18 @@ def _matrix_html(text):
     return re.sub(r"\n", "<br>", text)
 
 
+_A_TAG = re.compile(r'<a href="([^"]+)">.*?</a>', re.S)
+
+
 def send_matrix(hs, token, room, text):
     """ارسال به اتاق Matrix/Element با API استاندارد (متن HTML: پررنگ، کج، لینک)."""
-    plain = html_to_discord(text, embed=True)
+    # در اپ Element X لینکِ «با متن دلخواه» گاهی قابل زدن نیست؛ پس آدرس کامل را خودِ متن لینک می‌کنیم
+    linked = _A_TAG.sub(lambda m: f'<a href="{m.group(1)}">{m.group(1)}</a>', text)
+    text_plain = _A_TAG.sub(lambda m: m.group(1), text)
+    plain = html_to_discord(text_plain, embed=True)
     plain = re.sub(r"\*+", "", plain)
     body = json.dumps({"msgtype": "m.text", "body": re.sub(r"<[^>]+>", "", html.unescape(plain)),
-                       "format": "org.matrix.custom.html", "formatted_body": _matrix_html(text)}).encode()
+                       "format": "org.matrix.custom.html", "formatted_body": _matrix_html(linked)}).encode()
     joined = False
     for attempt in range(4):
         txn = f"{int(time.time() * 1000)}{os.urandom(3).hex()}"
