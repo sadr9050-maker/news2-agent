@@ -1,0 +1,56 @@
+name: Market News Agent
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"     # کمترین فاصلهٔ مجاز گیت‌هاب ۵ دقیقه است
+  workflow_dispatch:           # اجرای دستی از تب Actions
+
+concurrency:
+  group: news-agent            # جلوگیری از اجرای هم‌زمان دو نمونه (پست تکراری)
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # بازگردانی استیت دور قبل (خبرهای دیده‌شده + تیترهای اخیر + تحلیل‌های ارسال‌شده)
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: news_seen.json
+          key: news-state-${{ github.run_id }}
+          restore-keys: news-state-
+
+      # ایجنت اگر news_config.json نباشد جادوگر تعاملی را اجرا می‌کند؛ در CI فایل خالی کافی است
+      # (توکن و کانال از سکرت‌ها خوانده می‌شوند)
+      - name: Prepare config
+        run: '[ -f news_config.json ] || echo "{}" > news_config.json'
+
+      - name: Run agent (one cycle)
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          MATRIX_HOMESERVER: ${{ secrets.MATRIX_HOMESERVER }}
+          MATRIX_ROOM_ID: ${{ secrets.MATRIX_ROOM_ID }}
+          MATRIX_ACCESS_TOKEN: ${{ secrets.MATRIX_ACCESS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # اختیاری؛ اگر نداری می‌تواند خالی بماند
+        run: python news_agent.py --once
+
+      # حتی اگر اجرا خطا داد، استیت ذخیره شود
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: news_seen.json
+          key: news-state-${{ github.run_id }}
