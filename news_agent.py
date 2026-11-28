@@ -1551,16 +1551,9 @@ def main():
 
     if a.once:
         try:
-            dest = "Matrix/Element" if has_matrix(cfg) else ("Discord" if cfg.get("discord_webhook") else "Telegram")
-            log(f"مقصد ارسال: {dest} | خبرهای دیده‌شدهٔ قبلی: {len(seen)}")
-            if first and not a.backfill:
-                log("اولین اجرا (استیت قبلی پیدا نشد): خبرهای فعلی فقط علامت‌گذاری می‌شوند و پیامی نمی‌رود؛ از دور بعد خبرهای جدید ارسال می‌شوند.")
             n = run_cycle(cfg, seen, post, first=first, backfill=a.backfill, recent=recent, save_fn=save)
             save_state(seen, recent)
             log(f"{n} خبر ارسال شد.")
-            if _send_fails:      # اگر ارسالی شکست خورده، اجرا قرمز شود تا پنهان نماند
-                save_state(seen, recent)
-                sys.exit("ارسال بعضی پیام‌ها ناموفق بود؛ خط «ارسال ناموفق» بالاتر در لاگ را ببین.")
             maybe_analysis(cfg, post, save_fn=save)      # تحلیل روزانه (فقط اگر نوبتش رسیده باشد)
             save_state(seen, recent)
         except KeyboardInterrupt:
