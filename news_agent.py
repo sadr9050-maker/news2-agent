@@ -916,50 +916,16 @@ def has_alt_dest(cfg):
 
 
 def _matrix_html(text):
-    # بدون قاب/نقل‌قول: فقط متن ساده با پررنگ، کج و لینک
-    return re.sub(r"\n", "<br>", text)
-
-
-_A_TAG = re.compile(r'<a href="([^"]+)">.*?</a>', re.S)
-_SHORT_CACHE = {}
-
-
-def _shorten(url):
-    """کوتاه‌کردن لینک بلند فقط برای نمایش در Element؛ اگر نشد None برمی‌گرداند."""
-    if url in _SHORT_CACHE:
-        return _SHORT_CACHE[url]
-    res = None
-    for api in ("https://is.gd/create.php?format=simple&url=", "https://tinyurl.com/api-create.php?url="):
-        try:
-            req = urllib.request.Request(api + urllib.parse.quote(url, safe=""), headers={"User-Agent": "news-agent/1.0"})
-            out = urllib.request.urlopen(req, timeout=8).read().decode("utf-8", "ignore").strip()
-            if out.startswith("https://") and " " not in out and len(out) < len(url):
-                res = out
-                break
-        except Exception:
-            continue
-    _SHORT_CACHE[url] = res
-    return res
-
-
-def _matrix_url(m):
-    """آدرسی که در Element نشان داده می‌شود (کوتاه)؛ None یعنی همان لینکِ «لینک خبر» بماند."""
-    u = html.unescape(m.group(1))
-    return _shorten(u) if len(u) > 45 else u
+    t = re.sub(r"\n", "<br>", text)
+    return f"<blockquote>{t}</blockquote>"
 
 
 def send_matrix(hs, token, room, text):
     """ارسال به اتاق Matrix/Element با API استاندارد (متن HTML: پررنگ، کج، لینک)."""
-    # در اپ Element X لینکِ «با متن دلخواه» گاهی قابل زدن نیست؛ پس یک آدرس کوتاه را خودِ متن لینک می‌کنیم
-    def _linked(m):
-        u = _matrix_url(m)
-        return f'<a href="{html.escape(u, quote=True)}">{html.escape(u)}</a>' if u else m.group(0)
-    linked = _A_TAG.sub(_linked, text)
-    text_plain = _A_TAG.sub(lambda m: _matrix_url(m) or m.group(0), text)
-    plain = html_to_discord(text_plain, embed=True)
+    plain = html_to_discord(text, embed=True)
     plain = re.sub(r"\*+", "", plain)
     body = json.dumps({"msgtype": "m.text", "body": re.sub(r"<[^>]+>", "", html.unescape(plain)),
-                       "format": "org.matrix.custom.html", "formatted_body": _matrix_html(linked)}).encode()
+                       "format": "org.matrix.custom.html", "formatted_body": _matrix_html(text)}).encode()
     joined = False
     for attempt in range(4):
         txn = f"{int(time.time() * 1000)}{os.urandom(3).hex()}"
